@@ -16,15 +16,16 @@
 
 fprintf('First test \n \n');  
 
-% Download ML_Geer.mat problem from https://sparse.tamu.edu/
+% Download [name].mat problem from https://sparse.tamu.edu/
 
 % Load l.h.s. matrix.
-t = open('ML_Geer.mat');
+path_stem = 'SuiteSparseMat';
+t = open(fullfile(path_stem, '1138_bus.mat'));
 
 A = t.Problem.A;
 clear t
 
-m = 1000;
+m = 200;
 maxiter = 50;
 tol = 1e-10;
 K = 20;
