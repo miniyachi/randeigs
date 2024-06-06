@@ -1,7 +1,8 @@
-function errors = compute_errors(lambdatrues, diagD)
+function errors = compute_errors(lambdatrues, D)
     K = length(lambdatrues);
-    errors = zeros(K,1);
-    for i =1:K
-        errors(i,1) = min(abs(lambdatrues(i) - diagD) / abs(lambdatrues(i)));
+    n_iter = size(D,2);
+    errors = zeros(K,n_iter);
+    for i = 1:K
+        errors(i,:) = min(abs(lambdatrues(i) - D) / abs(lambdatrues(i)));
     end
 end

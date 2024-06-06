@@ -1,4 +1,4 @@
-function [V, D, flag] = randeigs(varargin)
+function [V, D, flag, inner_ds, pos_dim] = randeigs(varargin)
 %  Compute several eigenvalues and eigenvectors of a matrix by using  
 %  Krylov-Schur algorithm based on rand. Arnoldi process. 
 %  
@@ -109,7 +109,7 @@ function [V, D, flag] = randeigs(varargin)
 
 % Assign values to problem's parameters.
 [A,M,n,K,method,b,tol,m,maxit,display,thetagenfun,Theta,k,lssolver,lowprecision,...
-reorthog,postprocesslambda] = checkInputs(varargin{:});
+reorthog,postprocesslambda,track_d] = checkInputs(varargin{:});
 
 clear varargin options
 
@@ -134,6 +134,12 @@ q = zeros(n,1);
 w = zeros(n,1);
 s = zeros(k,1);
 p = zeros(k,1);
+
+% Initialize errors for each inner iter (if track_d = ture)
+if track_d
+    inner_ds = [];
+    pos_dim = [];
+end
 
 % Perform first inner iteration.
 s = Theta(b);
@@ -219,6 +225,27 @@ for outiter = 1:maxit
       end
 
       H(1:initer+1,initer) = r(1:initer+1);
+
+      if track_d && (initer >= K0)
+        % Compute Schur decomposition of H.
+        T = schur(H(1:initer, 1:initer));    
+        
+        % Compute eigenpairs.
+        d = eig(T, 'vector');
+        
+        % Sort eigenvalues and residuals (see built-in eigs function).
+        ind = whichEigenvalues(d, method);
+        d = d(ind);
+
+        % Push d to inner_ds
+        inner_ds = [inner_ds d(1:K0)];
+
+        % Push idx to restart_idx (if just after restart)
+        if (initer == K0) || (initer == sizeQ)
+            pair = [size(inner_ds,2); initer];
+            pos_dim = [pos_dim pair];
+        end
+      end
     end
     
     % Orthogonalize Krylov basis with respect to the M-inner product with
@@ -379,7 +406,7 @@ end
 
     
 function [A,M,n,K,method,b,tol,m,maxit,display,thetagenfun,Theta,k,lssolver,...
-lowprecision,reorthog,postprocesslambda]= checkInputs(varargin)
+lowprecision,reorthog,postprocesslambda,track_d]= checkInputs(varargin)
 
 if issparse(varargin{1})
     n = size(varargin{1},1);
@@ -442,6 +469,7 @@ if (nargin >= argind)
     addOptional(p,'LSsolver','5reorth');
     addOptional(p,'LowPrecision',0);
     addOptional(p,'ExactProj',1);
+    addOptional(p, 'TrackVals', 1); % New parameter
 
     parse(p,varargin{argind:nargin});
     options = p.Results;  
@@ -460,6 +488,7 @@ if (nargin >= argind)
         maxit = min(ceil(n/m),10);
     end
     display = options.Display;
+    track_d = options.TrackVals; % Set the new parameter
     
     if ~isempty(options.SketchingMatrixFun)
         thetagenfun = options.SketchingMatrixFun;
