@@ -1,4 +1,4 @@
-function [V, D, flag, inner_ds, pos_dim] = randeigs(varargin)
+function [V, D, flag, metrics, pos_dim] = randeigs(varargin)
 %  Compute several eigenvalues and eigenvectors of a matrix by using  
 %  Krylov-Schur algorithm based on rand. Arnoldi process. 
 %  
@@ -109,7 +109,7 @@ function [V, D, flag, inner_ds, pos_dim] = randeigs(varargin)
 
 % Assign values to problem's parameters.
 [A,M,n,K,method,b,tol,m,maxit,display,thetagenfun,Theta,k,lssolver,lowprecision,...
-reorthog,postprocesslambda,track_d] = checkInputs(varargin{:});
+reorthog,postprocesslambda,track,metric,lambdatrues] = checkInputs(varargin{:});
 
 clear varargin options
 
@@ -135,11 +135,15 @@ w = zeros(n,1);
 s = zeros(k,1);
 p = zeros(k,1);
 
-% Initialize errors for each inner iter (if track_d = ture)
-if track_d
-    inner_ds = [];
-    pos_dim = [];
-end
+% Initialize output struct
+out_struct = struct( ...
+    'residuals', {}, ...
+    'lambdatrue_errors', {}, ...
+    'matvec_count', 0, ...
+    'restart_info', {}, ...
+    'stability', {});
+% metrics = [];
+% pos_dim = [];
 
 % Perform first inner iteration.
 s = Theta(b);
@@ -225,24 +229,52 @@ for outiter = 1:maxit
       end
 
       H(1:initer+1,initer) = r(1:initer+1);
+        
+      % Track the error metric for each inner iteration
+      if track && (initer >= K0) 
+        
+        % Count the matvec
+        out_struct.matvec_count = out_struct.matvec_count + 1;
 
-      if track_d && (initer >= K0)
-        % Compute Schur decomposition of H.
-        T = schur(H(1:initer, 1:initer));    
+        % Compute Schur decomposition of H and its eigenpairs.
+        if strcmp(metric,'lambdatrue')
+            T = schur(H(1:initer, 1:initer));
+            d = eig(T, 'vector');
+        elseif strcmp(metric,'residual')
+            [X, T] = schur(H(1:initer, 1:initer));
+            [U, d] = eig(T, 'vector');
+            U = X*U;
+        end
         
-        % Compute eigenpairs.
-        d = eig(T, 'vector');
-        
-        % Sort eigenvalues and residuals (see built-in eigs function).
+        % Sort eigenvalues (and eigenvectors)
         ind = whichEigenvalues(d, method);
-        d = d(ind);
+        d = d(ind(1:K0));
+        if strcmp(metric,'residual')
+            U = U(:,ind(1:K0));
+        end
 
-        % Push d to inner_ds
-        inner_ds = [inner_ds d(1:K0)];
+        % Compute the metric
+        if strcmp(metric,'lambdatrue')
+            metrics = [metrics compute_errors(lambdatrues,d)];
+        elseif strcmp(metric,'residual')
+            % Compute V
+            if isreal(U) || ~isreal(Q)
+                V = Q(:,1:initer)*U;
+            else
+                V = Q(:,1:initer)*real(U)+1i*(Q(:,1:initer)*imag(U));
+            end
+            
+            % Normalize.
+            normV = sqrt(sum(abs(V).^2,1));
+            V = V*diag(1./normV);
+            
+            % Add the residual
+            metrics = [metrics compute_residuals(A,V,d)];
+        end
 
         % Push idx to restart_idx (if just after restart)
         if (initer == K0) || (initer == sizeQ)
-            pair = [size(inner_ds,2); initer];
+            pair = [size(metrics,2); initer];
             pos_dim = [pos_dim pair];
         end
       end
@@ -406,7 +438,7 @@ end
 
     
 function [A,M,n,K,method,b,tol,m,maxit,display,thetagenfun,Theta,k,lssolver,...
-lowprecision,reorthog,postprocesslambda,track_d]= checkInputs(varargin)
+lowprecision,reorthog,postprocesslambda,track,metric,lambdatrues]= checkInputs(varargin)
 
 if issparse(varargin{1})
     n = size(varargin{1},1);
@@ -469,7 +501,9 @@ if (nargin >= argind)
     addOptional(p,'LSsolver','5reorth');
     addOptional(p,'LowPrecision',0);
     addOptional(p,'ExactProj',1);
-    addOptional(p, 'TrackVals', 1); % New parameter
+    addOptional(p,'TrackInner',0);
+    addOptional(p,'Metric','residual');
+    addOptional(p,'Lambdatrues',[]);
 
     parse(p,varargin{argind:nargin});
     options = p.Results;  
@@ -488,7 +522,20 @@ if (nargin >= argind)
         maxit = min(ceil(n/m),10);
     end
     display = options.Display;
-    track_d = options.TrackVals; % Set the new parameter
+    track = options.TrackInner;
+    
+    if ~strcmp(options.Metric,'residual') && ~strcmp(options.Metric,'lambdatrue')
+        error('InputError:Metric', 'Unrecognized input metric.');
+    end
+    if strcmp(options.Metric, 'lambdatrue')
+        if isempty(options.Lambdatrues)
+            error('InputError:LambdatruesRequired', 'Option ''Lambdatrues'' must be provided when ''Metric'' is set to ''lambdatrue''.');
+        elseif length(options.Lambdatrues) ~= K
+            error('InputError:LengthMismatch', 'lambdatrues must have length K.');
+        end
+    end
+    metric = options.Metric;
+    lambdatrues = options.Lambdatrues;
     
     if ~isempty(options.SketchingMatrixFun)
         thetagenfun = options.SketchingMatrixFun;
