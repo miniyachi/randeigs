@@ -1,4 +1,4 @@
-function [V, D, flag, metrics, pos_dim] = randeigs(varargin)
+function [V, D, flag, out_struct] = randeigs(varargin)
 %  Compute several eigenvalues and eigenvectors of a matrix by using  
 %  Krylov-Schur algorithm based on rand. Arnoldi process. 
 %  
@@ -109,7 +109,7 @@ function [V, D, flag, metrics, pos_dim] = randeigs(varargin)
 
 % Assign values to problem's parameters.
 [A,M,n,K,method,b,tol,m,maxit,display,thetagenfun,Theta,k,lssolver,lowprecision,...
-reorthog,postprocesslambda,track,metric,lambdatrues] = checkInputs(varargin{:});
+reorthog,postprocesslambda,track,lambdatrues] = checkInputs(varargin{:});
 
 clear varargin options
 
@@ -136,14 +136,8 @@ s = zeros(k,1);
 p = zeros(k,1);
 
 % Initialize output struct
-out_struct = struct( ...
-    'residuals', {}, ...
-    'lambdatrue_errors', {}, ...
-    'matvec_count', 0, ...
-    'restart_info', {}, ...
-    'stability', {});
-% metrics = [];
-% pos_dim = [];
+out_struct = initialize_output(K);
+update_idx = 0;
 
 % Perform first inner iteration.
 s = Theta(b);
@@ -230,52 +224,67 @@ for outiter = 1:maxit
 
       H(1:initer+1,initer) = r(1:initer+1);
         
-      % Track the error metric for each inner iteration
+      %% Track the error metric for each inner iteration
       if track && (initer >= K0) 
-        
-        % Count the matvec
+        %% Increase update_idx
+        update_idx = update_idx + 1;
+
+        %% Count the matvec
         out_struct.matvec_count = out_struct.matvec_count + 1;
 
+        %% Update stability measure
+        out_struct.stability = [out_struct.stability, stability(initer+1)];
+        
+        %% Compute current Ritz vals/vecs
         % Compute Schur decomposition of H and its eigenpairs.
-        if strcmp(metric,'lambdatrue')
-            T = schur(H(1:initer, 1:initer));
-            d = eig(T, 'vector');
-        elseif strcmp(metric,'residual')
-            [X, T] = schur(H(1:initer, 1:initer));
-            [U, d] = eig(T, 'vector');
-            U = X*U;
-        end
+        [X, T] = schur(H(1:initer, 1:initer));
+        [U, d] = eig(T, 'vector');
+        U = X*U;
         
         % Sort eigenvalues (and eigenvectors)
         ind = whichEigenvalues(d, method);
         d = d(ind(1:K0));
-        if strcmp(metric,'residual')
-            U = U(:,ind(1:K0));
-        end
+        U = U(:,ind(1:K0));
 
-        % Compute the metric
-        if strcmp(metric,'lambdatrue')
-            metrics = [metrics compute_errors(lambdatrues,d)];
-        elseif strcmp(metric,'residual')
-            % Compute V
-            if isreal(U) || ~isreal(Q)
-                V = Q(:,1:initer)*U;
-            else
-                V = Q(:,1:initer)*real(U)+1i*(Q(:,1:initer)*imag(U));
+        %% Update lambdatrue errors
+        if ~isempty(lambdatrues)
+            % Compute lambdatrue relative error
+            errs = compute_errors(lambdatrues,d);
+            
+            % Assign error of j-th eigval to the corresponding field
+            for j = 1:K0
+                field_name = sprintf('eigval_%d', j);
+                out_struct(1).lambdatrue_errors.(field_name) = [out_struct(1).lambdatrue_errors.(field_name), errs(j)];
             end
-            
-            % Normalize.
-            normV = sqrt(sum(abs(V).^2,1));
-            V = V*diag(1./normV);
-            
-            % Add the residual
-            metrics = [metrics compute_residuals(A,V,d)];
         end
 
-        % Push idx to restart_idx (if just after restart)
-        if (initer == K0) || (initer == sizeQ)
-            pair = [size(metrics,2); initer];
-            pos_dim = [pos_dim pair];
+        %% Update residuals
+        % Get eigenvectors of A
+        if isreal(U) || ~isreal(Q)
+            V = Q(:,1:initer)*U;
+        else
+            V = Q(:,1:initer)*real(U)+1i*(Q(:,1:initer)*imag(U));
+        end
+        
+        % Normalize 
+        normV = sqrt(sum(abs(V).^2,1));
+        V = V*diag(1./normV);
+        
+        % Compute residuals
+        res = compute_residuals(A,V,d);
+        
+        % Assign residuals to the corresponding field
+        for j = 1:K0
+            field_name = sprintf('eigval_%d', j);
+            out_struct(1).residuals.(field_name) = [out_struct(1).residuals.(field_name), res(j)];
+        end
+
+        %% Update restart_info
+        if (initer == m)  % the end of one cycle 
+            out_struct(1).restart_info.n_cycle = [out_struct(1).restart_info.n_cycle, outiter];
+            out_struct(1).restart_info.matvec_done = [out_struct(1).restart_info.matvec_done, out_struct(1).matvec_count];
+            out_struct(1).restart_info.start_dim = [out_struct(1).restart_info.start_dim, sizeQ-1];
+            out_struct(1).restart_info.update_idx = [out_struct(1).restart_info.update_idx, update_idx];
         end
       end
     end
@@ -438,7 +447,7 @@ end
 
     
 function [A,M,n,K,method,b,tol,m,maxit,display,thetagenfun,Theta,k,lssolver,...
-lowprecision,reorthog,postprocesslambda,track,metric,lambdatrues]= checkInputs(varargin)
+lowprecision,reorthog,postprocesslambda,track,lambdatrues]= checkInputs(varargin)
 
 if issparse(varargin{1})
     n = size(varargin{1},1);
@@ -502,8 +511,8 @@ if (nargin >= argind)
     addOptional(p,'LowPrecision',0);
     addOptional(p,'ExactProj',1);
     addOptional(p,'TrackInner',0);
-    addOptional(p,'Metric','residual');
     addOptional(p,'Lambdatrues',[]);
+    addOptional(p,'HasLambdatrues',0);
 
     parse(p,varargin{argind:nargin});
     options = p.Results;  
@@ -524,17 +533,9 @@ if (nargin >= argind)
     display = options.Display;
     track = options.TrackInner;
     
-    if ~strcmp(options.Metric,'residual') && ~strcmp(options.Metric,'lambdatrue')
-        error('InputError:Metric', 'Unrecognized input metric.');
-    end
-    if strcmp(options.Metric, 'lambdatrue')
-        if isempty(options.Lambdatrues)
-            error('InputError:LambdatruesRequired', 'Option ''Lambdatrues'' must be provided when ''Metric'' is set to ''lambdatrue''.');
-        elseif length(options.Lambdatrues) ~= K
+    if ~isempty(options.Lambdatrues) & (length(options.Lambdatrues) ~= K)
             error('InputError:LengthMismatch', 'lambdatrues must have length K.');
-        end
     end
-    metric = options.Metric;
     lambdatrues = options.Lambdatrues;
     
     if ~isempty(options.SketchingMatrixFun)
@@ -720,3 +721,28 @@ switch method
 end
 
 end
+
+
+function out_struct = initialize_output(K)  % K: number of requested eigvals
+    % Initialize output struct array with one element
+    out_struct(1) = struct( ...
+        'residuals', struct(), ...
+        'lambdatrue_errors', struct(), ...
+        'matvec_count', 0, ...
+        'restart_info', struct(), ...
+        'stability', []);
+    
+    % Initialize structs in 'residuals' and 'lambdatrue_errors'
+    for i = 1:K
+        field_name = sprintf('eigval_%d', i);
+        out_struct(1).residuals.(field_name) = [];
+        out_struct(1).lambdatrue_errors.(field_name) = [];
+    end
+
+    % Initialize struct 'restart_info'
+    out_struct(1).restart_info.('n_cycle') = [];
+    out_struct(1).restart_info.('matvec_done') = [];
+    out_struct(1).restart_info.('start_dim') = [];
+    out_struct(1).restart_info.('update_idx') = [];
+end
+
