@@ -1,10 +1,12 @@
-saved = true;
-fignums = 10;
-
 n_classical = size(classical_errs,2);
 n_rand = size(rand_errs,2);
+K = size(classical_errs,1); % = number of requested eigvals
 
+fignums = K;
 
+% Define figure saving stem and create it if not exist
+fig_name_m_maxiter_stem = fullfile(fig_stem, name, path_metric, path_m_maxiter);
+mymakedir(fig_name_m_maxiter_stem);
 
 for t = 1:fignums
     %% Absolute relative errors
@@ -34,30 +36,36 @@ for t = 1:fignums
     custom_labels = arrayfun(@num2str, classical_pos_dim(2,:), 'UniformOutput', false);
     xticklabels(custom_labels); % Set x-tick labels
     
-    % Set up legend, label, title
+    % Set up legend, label
     legend([ls; hcxline; hrxline], 'Classical RR', 'Randomized RR', 'restart (classical)', 'restart (rand)');
     xlabel('Subspace dimension after restart');
-    ylabel('Relative error $\frac{\min_{j}{|\lambda_j - \lambda_i^{\ast}|}}{|\lambda_i|}$','interpreter','latex');
+    
+    if strcmp(metric,'residual')
+        ylabel('Residual $||A x - \lambda x||_2$','interpreter','latex');
+    elseif strcmp(metric,'lambdatrue')
+        ylabel('Relative error $\frac{\min_{j}{|\lambda_j - \lambda_i^{\ast}|}}{|\lambda_i|}$','interpreter','latex');
+    end
+
+    
+    % Set up title
     titlename = strrep(name, '_', '\_'); % To make sure "_" display properly
     title(strcat(titlename, sprintf(' (m=%d, maxiter=%d, %s eigenvalue)', m, maxiter, toOrdinal(t))));
     grid on;
 
     % Save the figure
     if saved
-        % Set up directory and make it if not exists
-        save_stem = fullfile('figs/inner', matclass, name, sprintf('m=%d_maxiter=%d', m, maxiter));
-        mymakedir(save_stem)
-        
+        path_whicheigval = sprintf('%s_eigvals', toOrdinal(t));
+
         % Save the figure
-        figname = strcat(name, '_', sprintf('m=%d_maxiter=%d_%s_eigvals.pdf', m, maxiter, toOrdinal(t)));
-        saveas(f(t), fullfile(save_stem, figname));
+        figname = strcat(name, '_', path_metric, '_', path_m_maxiter, '_', path_whicheigval, '.pdf'); % file name: {name}_m={m}_maxiter={maxiter}_{which}_eigvals.pdf
+        saveas(f(t), fullfile(fig_name_m_maxiter_stem, figname));
         
         % Export as a summary pdf file
         if export_summary
-            summary_stem = fullfile('figs/inner', matclass, 'Summary', sprintf('m=%d_maxiter=%d', m, maxiter));
-            mymakedir(summary_stem);
-            summary_path_name = fullfile(summary_stem, strcat(matclass, sprintf('_m=%d_maxiter=%d_%s_eigvals_summary.pdf', m, maxiter, toOrdinal(t))));
-            exportgraphics(f(t), summary_path_name, 'Append', true);
+            mymakedir(summary_dir);
+            filename_summary = strcat(matclass, '_', path_metric, '_', path_m_maxiter, '_', path_whicheigval, '_summary.pdf'); % file name: {matclass}_m={m}_maxiter={maxiter}_{which}_eigvals_summary.pdf
+            filepath_summary = fullfile(summary_dir, filename_summary);
+            exportgraphics(f(t), filepath_summary, 'Append', true);
         end
     end
 end

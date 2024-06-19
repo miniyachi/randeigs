@@ -1,25 +1,55 @@
-matclass = 'VLSI';
-dir_stem = strcat('SuiteSparseMat/', matclass);
-file_list = dir(strcat(dir_stem,'/*.mat'));
-% name_list = {file_list.name};
+matclass = 'PARSEC';
+mat_stem = strcat('SuiteSparseMat/', matclass);
+file_list = dir(strcat(mat_stem,'/*.mat'));
+name_list = {file_list.name};
 % name_list = {'Si2.mat'};
-name_list = {'vas_stokes_1M.mat'};
+% name_list = {'vas_stokes_1M.mat'};
+% name_list = {'PR02R.mat'};
+name_list = {'Ga41As41H72.mat'};
+
+saved = true;
+% metric = 'residual';
+metric = 'lambdatrue';
 
 tol = 1e-10;
-K = 10;
-m = 400;
-maxiter = 5;
+K = 50;
+m = 100;
+maxiter = 16;
 
+% Define saving stems
+path_experiment_matclass = fullfile('inner', matclass);
+path_m_maxiter = sprintf('K=%d_m=%d_maxiter=%d', K, m, maxiter);
+path_metric = sprintf('metric=%s', metric);
+fig_stem = fullfile('figs', path_experiment_matclass);
+results_stem = fullfile('results', path_experiment_matclass);
+
+% Set up summary file path and delete existing file if clear_summary=true
+export_summary = false;
+clear_summary = true;
+summary_dir = fullfile(fig_stem, 'Summary', path_metric, path_m_maxiter);
+if export_summary && clear_summary && exist(summary_dir, 'dir')
+    rmdir(summary_dir, 's');
+    disp(['Directory ', summary_dir, ' has been deleted before creating new summary.']);
+end
+
+% Main loop
 for i = 1:length(name_list)
     fprintf(repmat('=', 1, 100));
     fprintf('\n');
 
-    % Get file name
+    % Get matrix name
     file_name = name_list{i};
     fprintf('Run for matrix %s...\n', file_name);
+    
+    % Define *_name_stem
+    name = strrep(file_name, '.mat', ''); % remove ".mat" from file_name
+    results_name_stem = fullfile('results', path_experiment_matclass, name, path_metric);
+
+    % Create stem directory if not exist
+    mymakedir(results_name_stem);
 
     % Read the matrix
-    t = open(fullfile(dir_stem, file_name));
+    t = open(fullfile(mat_stem, file_name));
     A = t.Problem.A;
     clear t
     
@@ -29,44 +59,58 @@ for i = 1:length(name_list)
     n = size(A,1);
     A = speye(n,n)-A/(lambdamax+0.1);
     
-    % Obtain top K true eigvals from eigs
-    fprintf('Getting lambdatrues...\n');
-    lambdatrues = eigs(A,K,'largestabs','MaxIterations',500,'SubspaceDimension',min(size(A,1),1000));
-     
+    if strcmp(metric,'lambdatrue')
+        % Obtain top K true eigvals
+        fprintf('Getting lambdatrues... ');
+        trueeigvals_stem = fullfile('TrueEigvals', name);
+        mymakedir(trueeigvals_stem);
+        filename_lambdatrues = strcat(name, sprintf('_K=%d', K), '_shifted_lambdatrues.mat');
+        filepath_lambdatrues = fullfile(trueeigvals_stem, filename_lambdatrues);
+        if exist(filepath_lambdatrues, 'file') == 2
+            % Load the file to obtain lambdatrues
+            fprintf('Loading from existing file...\n');
+            lambdatrues = load(filepath_lambdatrues, 'lambdatrues').lambdatrues;
+        else
+            fprintf('File not exists. Running eigs...\n');
+            ml_dim = floor(2147483648 / size(A,1)); % make sure that memory for subspace basis not exceed 16GB
+            lambdatrues = eigs(A,K,'largestabs','MaxIterations',60,'SubspaceDimension',min([size(A,1),ml_dim,1200]),'Display',1);
+            save(filepath_lambdatrues, 'lambdatrues');    
+        end
+        fprintf(repmat('-.', 1, 50));
+        fprintf('\n');
+    elseif strcmp(metric,'residual')
+        lambdatrues = [];
+    end
+    
     % 
-    fprintf('randeigs with classical Rayleigh–Ritz approximation (classical Galerkin)... \n');  
+    fprintf('randeigs with classical Rayleigh–Ritz approximation (classical Galerkin)... \n');
+    I = @(x) x;
     tic
-    [V,D,flag,ds,pd] = randeigs(A,[],K,'largestabs','SubspaceDimension',m,'MaxIterations', maxiter,'Tolerance',tol,'ExactProj',1,'Display',0,'InvertOperator',1,'TrackVals',1);
+    [V,D,flag,errs,pd] = randeigs(A,[],K,'largestabs','SubspaceDimension',m,'MaxIterations', maxiter,'Tolerance',tol,'ExactProj',0,'Display',1,'InvertOperator',1, ...
+                                         'TrackInner',1, 'Metric', metric, 'Lambdatrue', lambdatrues, ...
+                                         'SketchingMatrixFun',@() I);
     toc
-    classical_errs = compute_errors(lambdatrues, ds);
+    classical_errs = errs;
     classical_pos_dim = pd;
     clear V
     
     %
     fprintf('randeigs with randomozed Rayleigh–Ritz approximation (sketched Galerkin)... \n');  
     tic
-    [V,D,flag,ds,pd] = randeigs(A,[],K,'largestabs','SubspaceDimension',m,'MaxIterations', maxiter,'Tolerance',tol,'ExactProj',0,'Display',0,'InvertOperator',1,'TrackVals',1);
+    [V,D,flag,errs,pd] = randeigs(A,[],K,'largestabs','SubspaceDimension',m,'MaxIterations', maxiter,'Tolerance',tol,'ExactProj',0,'Display',1,'InvertOperator',1, ...
+                                         'TrackInner',1, 'Metric', metric, 'Lambdatrue', lambdatrues);
     toc
-    rand_errs = compute_errors(lambdatrues, ds);
+    rand_errs = errs;
     rand_pos_dim = pd;
     clear V
-    
-    % Define directory to save the results
-    name = strrep(file_name, '.mat', '');   % remove ".mat" from file_name
-    save_dir_stem = fullfile('results/inner', matclass, name);
-
-    % Check if the directory exists
-    if exist(save_dir_stem, 'dir') ~= 7
-        % Directory does not exist, create it
-        mkdir(save_dir_stem);
-    end
 
     % Save the errors files
-    save_filename = strcat(name, '_EigvalsErrors_', sprintf('m=%d_maxiter=%d', m, maxiter), '.mat'); % file name: {name}_EigvalsErrors_m={m}_maxiter={maxiter}.mat
-    save(fullfile(save_dir_stem, save_filename), 'classical_errs', 'rand_errs', 'classical_pos_dim', 'rand_pos_dim', 'm', 'maxiter');
+    if saved
+        filename_errors = strcat(name, '_EigvalsErrors_', path_m_maxiter, '.mat'); % file name: {name}_EigvalsErrors_m={m}_maxiter={maxiter}.mat
+        save(fullfile(results_name_stem, filename_errors), 'classical_errs', 'rand_errs', 'classical_pos_dim', 'rand_pos_dim', 'm', 'maxiter', ...
+                                                           'matclass', 'fig_stem', 'name', 'path_m_maxiter');
+    end
 
-    % Save the figure
-    name = strrep(file_name, '.mat', ''); % remove ".mat" from file_name
-    export_summary = true;
+    % Generate and save the figure
     run("plot_inner.m");
 end

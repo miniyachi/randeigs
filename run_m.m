@@ -2,14 +2,14 @@ matclass = 'PARSEC';
 dir_stem = strcat('SuiteSparseMat/', matclass);
 file_list = dir(strcat(dir_stem,'/*.mat'));
 name_list = {file_list.name};
-% name_list = {'Si2.mat'};
+name_list = {'Si2.mat'};
 
 tol = 1e-10;
 K = 10;
 maxiter = 1;
 
 % Define the range and step size for maxiter_list (i.e. restarting iter)
-m_list = [15:1:200]';
+m_list = [15:10:200]';
 
 for i = 1:length(name_list)
     fprintf(repmat('=', 1, 100));
