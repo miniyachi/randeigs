@@ -138,6 +138,7 @@ p = zeros(k,1);
 % Initialize output struct
 out_struct = initialize_output(K);
 update_idx = 0;
+matvec_count = 0;
 
 % Perform first inner iteration.
 s = Theta(b);
@@ -224,13 +225,15 @@ for outiter = 1:maxit
 
       H(1:initer+1,initer) = r(1:initer+1);
         
+      matvec_count = matvec_count + 1;
+
       %% Track the error metric for each inner iteration
       if track && (initer >= K0) 
         %% Increase update_idx
         update_idx = update_idx + 1;
 
         %% Count the matvec
-        out_struct.matvec_count = out_struct.matvec_count + 1;
+        out_struct.matvec_count = [out_struct.matvec_count, matvec_count];
 
         %% Update stability measure
         out_struct.stability = [out_struct.stability, stability(initer+1)];
@@ -280,11 +283,14 @@ for outiter = 1:maxit
         end
 
         %% Update restart_info
-        if (initer == m)  % the end of one cycle 
+        if (initer == K0) || (initer == sizeQ) % start of cycle
+            out_struct(1).restart_info.cycle_start_idx = [out_struct(1).restart_info.cycle_start_idx, update_idx];
+        end
+        if (initer == m)  % end of cycle 
             out_struct(1).restart_info.n_cycle = [out_struct(1).restart_info.n_cycle, outiter];
-            out_struct(1).restart_info.matvec_done = [out_struct(1).restart_info.matvec_done, out_struct(1).matvec_count];
+            out_struct(1).restart_info.matvec_done = [out_struct(1).restart_info.matvec_done, matvec_count];
             out_struct(1).restart_info.start_dim = [out_struct(1).restart_info.start_dim, sizeQ-1];
-            out_struct(1).restart_info.update_idx = [out_struct(1).restart_info.update_idx, update_idx];
+            out_struct(1).restart_info.cycle_end_idx = [out_struct(1).restart_info.cycle_end_idx, update_idx];
         end
       end
     end
@@ -728,7 +734,7 @@ function out_struct = initialize_output(K)  % K: number of requested eigvals
     out_struct(1) = struct( ...
         'residuals', struct(), ...
         'lambdatrue_errors', struct(), ...
-        'matvec_count', 0, ...
+        'matvec_count', [], ...
         'restart_info', struct(), ...
         'stability', []);
     
@@ -743,6 +749,7 @@ function out_struct = initialize_output(K)  % K: number of requested eigvals
     out_struct(1).restart_info.('n_cycle') = [];
     out_struct(1).restart_info.('matvec_done') = [];
     out_struct(1).restart_info.('start_dim') = [];
-    out_struct(1).restart_info.('update_idx') = [];
+    out_struct(1).restart_info.('cycle_start_idx') = [];
+    out_struct(1).restart_info.('cycle_end_idx') = [];
 end
 
