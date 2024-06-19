@@ -84,7 +84,7 @@ for i = 1:length(name_list)
     
     % 
     fprintf('randeigs with classical Rayleigh–Ritz approximation (classical Galerkin)... \n');
-    I = @(x) x;
+    
     tic
     [V,D,flag,errs,pd] = randeigs(A,[],K,'largestabs','SubspaceDimension',m,'MaxIterations', maxiter,'Tolerance',tol,'ExactProj',0,'Display',1,'InvertOperator',1, ...
                                          'TrackInner',1, 'Metric', metric, 'Lambdatrue', lambdatrues, ...
